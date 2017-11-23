@@ -39,7 +39,7 @@ const environment = new Environmment({networkLayer});
 ## fetchQuery
 Relay includes a simple function called `fetchQuery` that lets you imperatively make GraphQL queries. First we'll add a method to the environment to send GraphQL queries, then write the fetchQuery function.
 
-```javascript
+```diff
 class Environment {
 	constructor({networkLayer}) {
 		this.networkLayer = networkLayer
@@ -51,7 +51,7 @@ class Environment {
 +	}
 }
 
-function fetchQuery(environment, query, variables) {
-	return environment.sendQuery(query, variables);
-}
++function fetchQuery(environment, query, variables) {
++	return environment.sendQuery(query, variables);
++}
 ```
