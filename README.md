@@ -18,16 +18,13 @@ First lets write the network layer.
 A network layer is the function you write to make GraphQL requests. It is usually a simple function that makes a network request to your GraphQL server. We can use the one from Relay's docs and add it to our environment.
 
 ```javascript
-async function networkLayer(
-  query,
-  variables
-) {
+async function networkLayer(query) {
   const response = await fetch('/graphql', {
     method: 'POST',
     headers: {
       'content-type': 'application/json'
     },
-    body: JSON.stringify({query, variables})
+    body: JSON.stringify({query})
   });
   return await response.json();
 }
@@ -45,14 +42,14 @@ class Environment {
 		this.networkLayer = networkLayer
 		this.cache = {};
 	}
-+	async sendQuery(query, variables) {
-+	   const data = await this.networkLayer(query, variables);
-+	   return data;
++	async sendQuery(query) {
++	   const result = await this.networkLayer(query);
++	   return result;
 +	}
 }
 
-+function fetchQuery(environment, query, variables) {
-+	return environment.sendQuery(query, variables);
++function fetchQuery(environment, query) {
++	return environment.sendQuery(query);
 +}
 ```
 
@@ -126,6 +123,111 @@ Start at the root with 'client:root'. Scalar fields are stored directly. Object 
 	'cGxhbmV0czoxNA==': {
 		'id': 'cGxhbmV0czoxNA==',
 		'name': 'Kashyyyk'
+	}
+}
+```
+
+
+To get to this, we'll need the Abstract Syntax Tree (AST) of the GraphQL query, which looks like this:
+
+```javascript
+{
+	definitions: [{
+		operation: "query",
+		selectionSet:	 {
+			selections: [{
+				name: "person"
+				arguments: [{
+					name: { value: "id" },
+					value: { value: "cGVvcGxlOjEz" }
+				}],
+				selectionSet: {
+					selections: [
+						{ name: { value: "id" } },
+						{ name: { value: "name" } },
+						{ name: { value: "name" } },
+						{ name: { value: "height" } },
+						{
+							name: { value: "species" },
+							selectionSet: {
+								selections: [
+									{ name: { value: "id" } },
+									{ name: { value: "name" } },
+									{
+										name: { value: "species" },
+										selectionSet: {
+											selections: [
+												{ name: { value: "id" } },
+												{ name: { value: "name" } }
+											]
+										}
+									}
+								]
+							}
+						]	
+					}
+				]
+			}]
+		}
+	}]
+}
+```
+
+I have omitted some of the fields that we don't need for this example. If you have never worked with ASTs before, it is just an object that describes code.  See astexplorer.net to learn more. You can write or copy/paste code and easily see the AST.
+
+Now we write the recursive function to transform the query and its results into an object for our cache:
+
+```javascript
+function getStorageKey(field) {
+    let storageKey = field.name.value;
+    if (field.arguments.length) {
+        storageKey += "{";
+        storageKey += field.arguments
+            .map(arg => `"${arg.name.value}":"${arg.value.value}"`)
+            .join(',');
+        storageKey += "}";
+    }
+    return storageKey;
+}
+
+function flattenField(field, result, id, cache = {}) {
+    cache[id] = {};
+    for (const selection of field.selectionSet.selections) {
+        const selectionStorageKey = getStorageKey(selection);
+        if (selection.selectionSet) {
+            // add link ref
+            const selectionData = result[selection.name.value];
+            cache[id][selectionStorageKey] = {
+                __ref: selectionData.id
+            };
+            flattenField(selection, selectionData, selectionData.id, cache);
+        } else {
+            console.log(selection);
+            // add scalar value
+            cache[id][selectionStorageKey] = result[selection.name.value];
+        }
+    }
+    return cache;
+}
+
+function flatten(query, result) {
+    const ast = graphql.parse(query);
+    return flattenField(ast.definitions[0], result.data, 'client:root');
+}
+```
+
+And now on every request we will add the new data to the cache:
+
+```javascript
+class Environment {
+	constructor({networkLayer}) {
+		this.networkLayer = networkLayer
+		this.cache = {};
+	}
+	async sendQuery(query) {
+	   const result = await this.networkLayer(query);
++	   Object.assign(this.cache, flatten(query, result))
+	   return result;
 	}
 }
 ```
