@@ -53,6 +53,8 @@ class Environment {
 +}
 ```
 
+What's missing: handling errors from the GraphQL server.
+
 ## Publish to cache
 The main benefit of using GraphQL is that client code can specify the exact needed data requirements. This means that different queries can contain overlapping data. Sending a mutation that modifies one record should cause any views rendering that same record to be updated. To accomplish this we will want to store all of the data we receive from our GraphQL server in our environment's cache. [SWAPI GraphQL query](http://graphql.org/swapi-graphql/?query=%7B%0A%20%20person(id%3A%20%22cGVvcGxlOjEz%22)%20%7B%0A%20%20%20%20name%0A%20%20%20%20height%0A%20%20%20%20species%20%7B%0A%20%20%20%20%20%20id%0A%20%20%20%20%20%20name%0A%20%20%20%20%20%20homeworld%20%7B%0A%20%20%20%20%20%20%20%20id%0A%20%20%20%20%20%20%20%20name%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%7D%0A%7D)
 
@@ -231,3 +233,64 @@ class Environment {
 	}
 }
 ```
+
+What's missing: Handling queries with variables, handling field aliases, handling array (plural) field links.
+
+## QueryRenderer
+Now we can add the first React Component, the QueryRenderer. You use it by passing an environment instance, a graphql query, and a [render prop](https://cdb.reacttraining.com/use-a-render-prop-50de598f11ce) that is called with the data from the GraphQL server.
+
+```javascript
+const MyComponent = () => (
+	<QueryRenderer
+		environment={environment}
+		query={`
+			{
+			  person(id: "cGVvcGxlOjEz") {
+			    id
+			    name
+			    height
+			    species {
+			      id
+			      name
+			      homeworld {
+			        id
+			        name
+			      }
+			    }
+			  }
+			}
+		`}
+		render={({props}) => {
+			if (!props) {
+				return <div>Loading</div>;
+			}
+			return (
+				<div>
+					<h1>{props.person.name}</h1>
+					<div>height: {props.person.height}</div>
+					<div>species: {props.person.species.name}</div>
+					<div>homeworld: {props.person.species.homeworld.name}</div>
+				</div>
+			);
+		}}
+	/>
+)
+
+```
+
+Now lets implement it
+
+```javascript
+class QueryRenderer extends React.Component {
+	constructor(props) {
+		super(props);
+		this.state = {};
+		props.environment.sendQuery(props.query)
+			.then(data => this.setState({props: data}));
+	}
+	render() {
+		return this.props.render({this.state});
+	}
+}
+```
+What's missing: Re-fetch when query or environment props changes.
