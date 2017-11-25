@@ -204,7 +204,6 @@ function flattenField(field, result, id, cache = {}) {
             };
             flattenField(selection, selectionData, selectionData.id, cache);
         } else {
-            console.log(selection);
             // add scalar value
             cache[id][selectionStorageKey] = result[selection.name.value];
         }
@@ -228,13 +227,16 @@ class Environment {
 	}
 	async sendQuery(query) {
 	   const result = await this.networkLayer(query);
-+	   Object.assign(this.cache, flatten(query, result))
+	   this.publish(result);
 	   return result;
+	}
+	publish(result) {
++	   Object.assign(this.cache, flatten(query, result))
 	}
 }
 ```
 
-What's missing: Handling queries with variables, handling field aliases, handling array (plural) field links.
+What's missing: Handling queries with variables, handling field aliases, handling array (plural) field links, automatically add `id` field to each object.
 
 ## QueryRenderer
 Now we can add the first React Component, the QueryRenderer. You use it by passing an environment instance, a graphql query, and a [render prop](https://cdb.reacttraining.com/use-a-render-prop-50de598f11ce) that is called with the data from the GraphQL server.
@@ -294,3 +296,76 @@ class QueryRenderer extends React.Component {
 }
 ```
 What's missing: Re-fetch when query or environment props changes.
+
+## Data masking & selectors
+One of the main features of Relay is fragment colocation and data masking. You keep GraphQL fragments in the same file as your component and each component only has access to the data specified in that fragment. It does not have access to any data requested by parent, child, or sibling containers. This is done to prevent implicit dependencies. You don't want to accidently rely on data that was requested by an unrelated component. [Read more about data masking.](https://facebook.github.io/relay/docs/thinking-in-relay.html#data-masking)
+
+To accomplish this we need a way to pull data out of the store based on the fragments. We will use fragments to create "selectors" for this purpose.
+
+First let's break up our query into fragments
+
+```graphql
+{
+  person(id: "cGVvcGxlOjEz") {
+  	...PersonDetails
+    id
+  }
+}
+
+fragment PersonDetails on Person {
+	id
+	name,
+	height
+	species {
+		id
+		...SpeciesDetails
+	}
+}
+
+fragment SpeciesDetails on Species {
+	id
+   name
+   homeworld {
+     id
+     name
+   }
+}
+
+```
+
+And now a function to select data for a fragment out of the store. We need both the fragment and the id of the object we are selecting.
+
+```javascript
+class Environment {
+	...
+	_traverseSelections(record, selections) {
+        const data = {};
+        for (const selection of selections) {
+            const selectionResult = record[selection.name.value];
+            if (typeof selectionResult === 'object' && selectionResult.__ref) {
+                // link to another object
+                data[selection.name.value] = this._traverseSelections(
+                    this.cache[selectionResult.__ref],
+                    selection.selectionSet.selections
+                );
+            } else if (selection.kind === 'FragmentSpread') {
+                // reference another fragment
+                data.__fragments = data.__fragments || {};
+                data.__fragments[selection.name.value] = {};
+            } else {
+                // scalar
+                data[selection.name.value] = selectionResult;
+            }
+        }
+        return data;
+    }
+    selectData(id, fragment) {
+        const fragmentAst = graphql.parse(fragment);
+        return this._traverseSelections(
+            this.cache[id],
+            fragmentAst.definitions[0].selectionSet.selections
+        );
+    }
+}
+```
+What's missing: handling variables (again), array fields (again)
