@@ -284,11 +284,11 @@ Now lets implement it
 
 ```javascript
 class QueryRenderer extends React.Component {
-	constructor(props) {
+	async constructor(props) {
 		super(props);
 		this.state = {};
-		props.environment.sendQuery(props.query)
-			.then(data => this.setState({props: data}));
+		const data = await props.environment.sendQuery(props.query);
+		this.setState({props: data});
 	}
 	render() {
 		return this.props.render({this.state});
@@ -359,13 +359,125 @@ class Environment {
         }
         return data;
     }
-    selectData(id, fragment) {
-        const fragmentAst = graphql.parse(fragment);
+    selectData(id, definition) {
+    	 // definition is either fragment or query AST
         return this._traverseSelections(
             this.cache[id],
-            fragmentAst.definitions[0].selectionSet.selections
+            definition.selectionSet.selections
         );
     }
 }
 ```
 What's missing: handling variables (again), array fields (again)
+
+## Fragment Container
+
+A fragment container is a Higher Order Component that enables data masking and GraphQL fragment co-location. I'm going to rewrite the example the QueryRenderer example to use Fragment Containers
+
+```javascript
+const MyComponent = () => (
+	<QueryRenderer
+		environment={environment}
+		query={`
+		  {
+			  person(id: "cGVvcGxlOjEz") {
+			  	...PersonDetails
+			    id
+			  }
+			}
+		`}
+		render={({props}) => {
+			if (!props) {
+				return <div>Loading</div>;
+			}
+			return (
+				<PersonDetails data={props.person}/>
+			);
+		}}
+	/>
+)
+
+let PersonDetails = ({data}) => (
+	<div>
+		<h1>{props.person.name}</h1>
+		<div>height: {props.person.height}</div>
+		<SpeciesDetails data={data.species} />
+	</div>	
+);
+
+PersonDetails = createFragmentContainer(PersonDetails, `
+	fragment PersonDetails on Person {
+		id
+		name,
+		height
+		species {
+			id
+			...SpeciesDetails
+		}
+	}
+`);
+
+let SpeciesDetails = ({data}) => (
+	<div>
+		<div>species: {data.name}</div>
+		<div>homeworld: {data.homeworld.name}</div>
+	</div>	
+);
+
+SpeciesDetails = createFragmentContainer(SpeciesDetails, `
+	fragment SpeciesDetails on Person {
+		id
+	   name
+	   homeworld {
+	     id
+	     name
+	   }
+	}
+`);
+
+```
+
+First we'll update the QueryRenderer to use selectData for proper data masking. We also add the environment to React context
+
+```javascript
+class QueryRenderer extends React.Component {
+	async constructor(props) {
+		super(props);
+		this.state = {};
+		await props.environment.sendQuery(props.query);
+		const definition = graphql.parse(query).definitions[0];
+		const data = props.environment.selectData('client:root', definition);
+		this.setState({props: data});
+	}
+	getChildContext() {
+		return {
+			environment: this.props.environment
+		};
+	}
+	render() {
+		return this.props.render({this.state});
+	}
+}
+```
+
+And now implement `createFragmentContainer`
+
+```javascript
+const createFragmentContainer = (Component, fragment) => {
+	return class extends React.Component {
+		constructor(props) {
+			super(props);
+			const definition = graphql.parse(fragment).definitions[0];
+			this.state = {
+				data: this.context.environment.selectData(
+					props.data.id,
+					definition
+				)
+			};
+		}
+		render() {
+			return <Component data={this.state.data} />;
+		}
+	}
+}
+```
