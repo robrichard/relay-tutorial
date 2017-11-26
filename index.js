@@ -3,7 +3,7 @@ const graphql = require('graphql');
 class Environment {
     constructor({networkLayer}) {
         this.networkLayer = networkLayer
-        this.cache = {};
+        this.store = {};
     }
     async sendQuery(query) {
         const result = await this.networkLayer(query);
@@ -11,7 +11,7 @@ class Environment {
         return result;
     }
     publish(result) {
-        Object.assign(this.cache, flatten(query, result))
+        Object.assign(this.store, flatten(query, result))
     }
     _traverseSelections(record, selections) {
         const data = {};
@@ -20,7 +20,7 @@ class Environment {
             if (typeof selectionResult === 'object' && selectionResult.__ref) {
                 // link to another object
                 data[selection.name.value] = this._traverseSelections(
-                    this.cache[selectionResult.__ref],
+                    this.store[selectionResult.__ref],
                     selection.selectionSet.selections
                 );
             } else if (selection.kind === 'FragmentSpread') {
@@ -36,9 +36,8 @@ class Environment {
     }
     selectData(id, fragment) {
         const fragmentAst = graphql.parse(fragment);
-        console.log(JSON.stringify(fragmentAst, null, 2));
         return this._traverseSelections(
-            this.cache[id],
+            this.store[id],
             fragmentAst.definitions[0].selectionSet.selections
         );
     }
@@ -57,23 +56,23 @@ function getStorageKey(field) {
     return storageKey;
 }
 
-function flattenField(field, result, id, cache = {}) {
-    cache[id] = {};
+function flattenField(field, result, id, store = {}) {
+    store[id] = {};
     for (const selection of field.selectionSet.selections) {
         const selectionStorageKey = getStorageKey(selection);
         if (selection.selectionSet) {
             // add link ref
             const selectionData = result[selection.name.value];
-            cache[id][selectionStorageKey] = {
+            store[id][selectionStorageKey] = {
                 __ref: selectionData.id
             };
-            flattenField(selection, selectionData, selectionData.id, cache);
+            flattenField(selection, selectionData, selectionData.id, store);
         } else {
             // add scalar value
-            cache[id][selectionStorageKey] = result[selection.name.value];
+            store[id][selectionStorageKey] = result[selection.name.value];
         }
     }
-    return cache;
+    return store;
 }
 
 function flatten(query, result) {
