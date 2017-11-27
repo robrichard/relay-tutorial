@@ -541,3 +541,75 @@ class Environment {
 +    }
 }
 ```
+
+Add subscription to QueryRenderer
+
+```javascript
+class QueryRenderer extends React.Component {
+	async constructor(props) {
+		super(props);
+		this.state = {};
+		await props.environment.sendQuery(props.query);
+		const definition = graphql.parse(query).definitions[0];
+		const data = props.environment.selectData('client:root', definition);		this.setState({props: data});
+		
++		this.subscription = props.environment.subscribe(
++	 		'client:root',
++	 	 	definition,
++	 	  	() => {
++	 	   		const newData = props.environment.selectData('client:root', definition);
++				this.setState({props: newData});
++			}
++		 );
+	}
++	componentWillUnmount() {
++		this.subscription.dispose();
++	}
+	getChildContext() {
+		return {
+			environment: this.props.environment
+		};
+	}
+	render() {
+		return this.props.render({this.state});
+	}
+}
+```
+
+Add subscription to Fragment Container
+
+```javascript
+const createFragmentContainer = (Component, fragment) => {
+	return class extends React.Component {
+		constructor(props) {
+			super(props);
+			const definition = graphql.parse(fragment).definitions[0];
+			this.state = {
+				data: this.context.environment.selectData(
+					props.data.id,
+					definition
+				)
+			};
++			this.subscription = props.environment.subscribe(
++		 		'client:root',
++	 		 	definition,
++	 	  		() => {
++	 	   			const newData = this.context.environment.selectData(
++	 	   		 		props.data.id,
++	 	   		 	 	definition
++	 	   		 	);
++					this.setState({data: newData});
++				}
++		 	);
+		}
++		componentWillUnmount() {
++			this.subscription.dispose();
++		}
+		render() {
+			return <Component data={this.state.data} />;
+		}
+	}
+}
+```
+
+What's missing: need to update subscriptions when props change.
