@@ -230,9 +230,10 @@ class Environment {
 	   this.publish(result);
 	   return result;
 	}
-	publish(result) {
-+	   Object.assign(this.store, flatten(query, result))
-	}
+    publish(result) {
+    	const newStoreData = flatten(query, result);
+    	Object.assign(this.store, newStoreData)
+    }
 }
 ```
 
@@ -336,34 +337,38 @@ fragment SpeciesDetails on Species {
 And now a function to select data for a fragment out of the store. We need both the fragment and the id of the object we are selecting.
 
 ```javascript
+
+function traverseSelections(record, selections, store) {
+    const data = {};
+    for (const selection of selections) {
+        const selectionResult = record[selection.name.value];
+        if (typeof selectionResult === 'object' && selectionResult.__ref) {
+            // link to another object
+            data[selection.name.value] = traverseSelections(
+                store[selectionResult.__ref],
+                selection.selectionSet.selections,
+                store
+            );
+        } else if (selection.kind === 'FragmentSpread') {
+            // reference another fragment
+            data.__fragments = data.__fragments || {};
+            data.__fragments[selection.name.value] = {};
+        } else if (selectionResult) {
+            // scalar
+            data[selection.name.value] = selectionResult;
+        }
+    }
+    return data;
+}
+
 class Environment {
 	...
-	_traverseSelections(record, selections) {
-        const data = {};
-        for (const selection of selections) {
-            const selectionResult = record[selection.name.value];
-            if (typeof selectionResult === 'object' && selectionResult.__ref) {
-                // link to another object
-                data[selection.name.value] = this._traverseSelections(
-                    this.store[selectionResult.__ref],
-                    selection.selectionSet.selections
-                );
-            } else if (selection.kind === 'FragmentSpread') {
-                // reference another fragment
-                data.__fragments = data.__fragments || {};
-                data.__fragments[selection.name.value] = {};
-            } else {
-                // scalar
-                data[selection.name.value] = selectionResult;
-            }
-        }
-        return data;
-    }
-    selectData(id, definition) {
-    	 // definition is either fragment or query AST
-        return this._traverseSelections(
+    selectData(id, fragment) {
+        const fragmentAst = graphql.parse(fragment);
+        return traverseSelections(
             this.store[id],
-            definition.selectionSet.selections
+            fragmentAst.definitions[0].selectionSet.selections,
+            this.store
         );
     }
 }
@@ -479,5 +484,60 @@ const createFragmentContainer = (Component, fragment) => {
 			return <Component data={this.state.data} />;
 		}
 	}
+}
+```
+
+## Subscribe to changes in the store
+The next thing we need is a way to rerender our React Components if the data they are rendering changes in the environment. Data could change from a mutation being sent or overlapping data returned from another QueryRenderer.
+
+This works similarly to the `subscribe` function in Redux. The difference is in Redux, the subscription callback is invoked on any change in the store. Here you are subscribed to specific data and the callback is only invoked when the data you are subscribed to changes.
+
+```javascript
+class Environment {
+    constructor({networkLayer}) {
+        this.networkLayer = networkLayer
+        this.store = {};
+        this.subscriptions = [];
+    }
+    async sendQuery(query) {
+        const result = await this.networkLayer(query);
+        this.publish(result);
+        return result;
+    }
+    publish(result) {
+    	const newStoreData = flatten(query, result);
+    	Object.assign(this.store, newStoreData)
++    	for (const subscription of this.subscriptions) {
++     		// traverse the newly added data for each subscription.
++	     	const fragmentAst = graphql.parse(subscription.fragment);
++			const selection = traverseSeletions(
++				subscription.id,
++				fragmentAst.definitions[0].selectionSet.selections,
++				newStoreData
++			);
++		 	// call handleUpdate if any matching data is found
++			if (Object.keys(selection).length) {
++				subscription.handleUpdate();
++			}
++    	}
+    }
+    selectData(id, fragment) {
+        const fragmentAst = graphql.parse(fragment);
+        return traverseSelections(
+            this.store[id],
+            fragmentAst.definitions[0].selectionSet.selections,
+            this.store
+        );
+    }
++    subscribe(id, fragment, handleUpdate) {
++    	const subscription = {id, fragment, handleUpdate};
++    	this.subscriptions = [...this.subscriptions, subscription];
++    	return {
++    		dispose: () => {
++    			this.subscriptions = this.subscriptions
++    				.filter(s => s !== subscription)
++    		}
++    	}
++    }
 }
 ```

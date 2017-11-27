@@ -1,5 +1,28 @@
 const graphql = require('graphql');
 
+function traverseSelections(record, selections, store) {
+    const data = {};
+    for (const selection of selections) {
+        const selectionResult = record[selection.name.value];
+        if (typeof selectionResult === 'object' && selectionResult.__ref) {
+            // link to another object
+            data[selection.name.value] = traverseSelections(
+                store[selectionResult.__ref],
+                selection.selectionSet.selections,
+                store
+            );
+        } else if (selection.kind === 'FragmentSpread') {
+            // reference another fragment
+            data.__fragments = data.__fragments || {};
+            data.__fragments[selection.name.value] = {};
+        } else if (selectionResult) {
+            // scalar
+            data[selection.name.value] = selectionResult;
+        }
+    }
+    return data;
+}
+
 class Environment {
     constructor({networkLayer}) {
         this.networkLayer = networkLayer
@@ -11,34 +34,15 @@ class Environment {
         return result;
     }
     publish(result) {
-        Object.assign(this.store, flatten(query, result))
-    }
-    _traverseSelections(record, selections) {
-        const data = {};
-        for (const selection of selections) {
-            const selectionResult = record[selection.name.value];
-            if (typeof selectionResult === 'object' && selectionResult.__ref) {
-                // link to another object
-                data[selection.name.value] = this._traverseSelections(
-                    this.store[selectionResult.__ref],
-                    selection.selectionSet.selections
-                );
-            } else if (selection.kind === 'FragmentSpread') {
-                // reference another fragment
-                data.__fragments = data.__fragments || {};
-                data.__fragments[selection.name.value] = {};
-            } else {
-                // scalar
-                data[selection.name.value] = selectionResult;
-            }
-        }
-        return data;
+        const newStoreData = flatten(query, result);
+        Object.assign(this.store, newStoreData)
     }
     selectData(id, fragment) {
         const fragmentAst = graphql.parse(fragment);
-        return this._traverseSelections(
+        return traverseSelections(
             this.store[id],
-            fragmentAst.definitions[0].selectionSet.selections
+            fragmentAst.definitions[0].selectionSet.selections,
+            this.store
         );
     }
 }
