@@ -551,7 +551,8 @@ class QueryRenderer extends React.Component {
 		this.state = {};
 		await props.environment.sendQuery(props.query);
 		const definition = graphql.parse(query).definitions[0];
-		const data = props.environment.selectData('client:root', definition);		this.setState({props: data});
+		const data = props.environment.selectData('client:root', definition);
+		this.setState({props: data});
 		
 +		this.subscription = props.environment.subscribe(
 +	 		'client:root',
